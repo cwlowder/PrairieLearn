@@ -73,6 +73,8 @@
 
   * Add documentation for the `shuffleQuestions` option (Matt West).
 
+  * Add submission info modal with external grading stats (Nathan Walters).
+
   * Fix broken file upload element (Nathan Walters).
 
   * Fix broken popover and improve assessment label styles (Nathan Walters).
