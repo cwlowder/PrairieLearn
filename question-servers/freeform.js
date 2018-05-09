@@ -5,9 +5,10 @@ const fs = require('fs-extra');
 const path = require('path');
 const mustache = require('mustache');
 const cheerio = require('cheerio');
+const zyspawn = require('zyspawn');
 
 const logger = require('../lib/logger');
-const codeCaller = require('../lib/code-caller');
+const zygotePool = require('../lib/zygote-pool');
 const jsonLoader = require('../lib/json-load');
 
 // Maps core element names to element info
@@ -27,10 +28,7 @@ module.exports = {
     },
 
     close: function(callback) {
-        codeCaller.waitForFinish((err) => {
-            if (ERR(err, callback)) return;
-            callback(null);
-        });
+        callback(null);
     },
 
     /**
@@ -143,7 +141,7 @@ module.exports = {
         }
     },
 
-    elementFunction: function(pc, fcn, elementName, $, element, index, data, context, callback) {
+    elementFunction: function(zy, fcn, elementName, $, element, index, data, context, callback) {
         let controller, cwd;
         if (_.has(context.course_elements, elementName)) {
             cwd = path.join(context.course.path, 'elements', elementName);
@@ -161,15 +159,15 @@ module.exports = {
             const pythonFile = controller.replace(/\.[pP][yY]$/, '');
             const opts = {
                 cwd,
-                paths: [path.join(__dirname, 'freeformPythonLib')],
+                paths: [path.join(__dirname, 'freeformPythonLib'), path.join(__dirname, '../lib')],
             };
-            pc.call(pythonFile, fcn, pythonArgs, opts, (err, ret, consoleLog) => {
-                if (err instanceof codeCaller.FunctionMissingError) {
+            zy.call(pythonFile, fcn, pythonArgs, opts, (err, output) => {
+                if (err instanceof zyspawn.FunctionMissingError) {
                     // function wasn't present in server
                     return callback(null, module.exports.defaultElementFunctionRet(fcn, data), '');
                 }
                 if (ERR(err, callback)) return;
-                callback(null, ret, consoleLog);
+                callback(null, output.result, output.consoleLog);
             });
         } else {
             // JS module
@@ -201,7 +199,7 @@ module.exports = {
         }
     },
 
-    execPythonServer: function(pc, phase, data, html, context, callback) {
+    execPythonServer: function(zy, phase, data, html, context, callback) {
         const pythonFile = 'server';
         const pythonFunction = phase;
         const pythonArgs = [data];
@@ -216,14 +214,13 @@ module.exports = {
                 // server.py does not exist
                 return callback(null, module.exports.defaultServerRet(phase, data, html, context), '');
             }
-
-            pc.call(pythonFile, pythonFunction, pythonArgs, opts, (err, ret, consoleLog) => {
-                if (err instanceof codeCaller.FunctionMissingError) {
+            zy.call(pythonFile, pythonFunction, pythonArgs, opts, (err, output) => {
+                if (err instanceof zyspawn.FunctionMissingError) {
                     // function wasn't present in server
                     return callback(null, module.exports.defaultServerRet(phase, data, html, context), '');
                 }
                 if (ERR(err, callback)) return;
-                callback(null, ret, consoleLog);
+                callback(null, output.result, output.consoleLog);
             });
         });
     },
@@ -318,7 +315,7 @@ module.exports = {
         return null;
     },
 
-    processQuestionHtml: function(phase, pc, data, context, callback) {
+    processQuestionHtml: function(phase, zy, data, context, callback) {
         const courseIssues = [];
         const origData = JSON.parse(JSON.stringify(data));
         const renderedElementNames = [];
@@ -351,7 +348,7 @@ module.exports = {
                         renderedElementNames.push(elementName);
                     }
 
-                    this.elementFunction(pc, phase, elementName, $, element, index, data, context, (err, ret_val, consoleLog) => {
+                    this.elementFunction(zy, phase, elementName, $, element, index, data, context, (err, ret_val, consoleLog) => {
                         if (err) {
                             const elementFile = module.exports.getElementFilename(elementName, context);
                             const courseIssue = new Error(elementFile + ': Error calling ' + phase + '(): ' + err.toString());
@@ -445,7 +442,7 @@ module.exports = {
         });
     },
 
-    processQuestionServer: function(phase, pc, data, html, fileData, context, callback) {
+    processQuestionServer: function(phase, zy, data, html, fileData, context, callback) {
         const courseIssues = [];
         const origData = JSON.parse(JSON.stringify(data));
 
@@ -457,7 +454,7 @@ module.exports = {
             return callback(null, courseIssues, data, '');
         }
 
-        this.execPythonServer(pc, phase, data, html, context, (err, ret_val, consoleLog) => {
+        this.execPythonServer(zy, phase, data, html, context, (err, ret_val, consoleLog) => {
             if (err) {
                 const serverFile = path.join(context.question_dir, 'server.py');
                 const courseIssue = new Error(serverFile + ': Error calling ' + phase + '(): ' + err.toString());
@@ -511,18 +508,18 @@ module.exports = {
         });
     },
 
-    processQuestion: function(phase, pc, data, context, callback) {
+    processQuestion: function(phase, zy, data, context, callback) {
         if (phase == 'generate') {
-            module.exports.processQuestionServer(phase, pc, data, '', Buffer.from(''), context, (err, courseIssues, data, html, fileData) => {
+            module.exports.processQuestionServer(phase, zy, data, '', Buffer.from(''), context, (err, courseIssues, data, html, fileData) => {
                 if (ERR(err, callback)) return;
                 callback(null, courseIssues, data, html, fileData);
             });
         } else {
-            module.exports.processQuestionHtml(phase, pc, data, context, (err, courseIssues, data, html, fileData, renderedElementNames) => {
+            module.exports.processQuestionHtml(phase, zy, data, context, (err, courseIssues, data, html, fileData, renderedElementNames) => {
                 if (ERR(err, callback)) return;
                 const hasFatalError = _.some(_.map(courseIssues, 'fatal'));
                 if (hasFatalError) return callback(null, courseIssues, data, html, fileData);
-                module.exports.processQuestionServer(phase, pc, data, html, fileData, context, (err, ret_courseIssues, data, html, fileData) => {
+                module.exports.processQuestionServer(phase, zy, data, html, fileData, context, (err, ret_courseIssues, data, html, fileData) => {
                     if (ERR(err, callback)) return;
                     courseIssues.push(...ret_courseIssues);
                     callback(null, courseIssues, data, html, fileData, renderedElementNames);
@@ -542,9 +539,9 @@ module.exports = {
                 variant_seed: parseInt(variant_seed, 36),
                 options: _.defaults({}, course.options, question.options),
             };
-            const pc = new codeCaller.PythonCaller();
-            module.exports.processQuestion('generate', pc, data, context, (err, courseIssues, data, _html, _fileData, _renderedElementNames) => {
-                pc.done();
+            const zy = zygotePool.request();
+            module.exports.processQuestion('generate', zy, data, context, (err, courseIssues, data, _html, _fileData, _renderedElementNames) => {
+                zy.done();
                 if (ERR(err, callback)) return;
                 const ret_vals = {
                     params: data.params,
@@ -568,9 +565,9 @@ module.exports = {
                 variant_seed: parseInt(variant.variant_seed, 36),
                 options: _.get(variant, 'options', {}),
             };
-            const pc = new codeCaller.PythonCaller();
-            module.exports.processQuestion('prepare', pc, data, context, (err, courseIssues, data, _html, _fileData, _renderedElementNames) => {
-                pc.done();
+            const zy = zygotePool.request();
+            module.exports.processQuestion('prepare', zy, data, context, (err, courseIssues, data, _html, _fileData, _renderedElementNames) => {
+                zy.done();
                 if (ERR(err, callback)) return;
                 const ret_vals = {
                     params: data.params,
@@ -581,7 +578,7 @@ module.exports = {
         });
     },
 
-    renderPanel: function(panel, pc, variant, question, submission, course, locals, callback) {
+    renderPanel: function(panel, zy, variant, question, submission, course, locals, callback) {
         // broken variant kills all rendering
         if (variant.broken) return callback(null, [], 'Broken question due to error in question code');
 
@@ -624,7 +621,7 @@ module.exports = {
             data.options.question_path = context.question_dir;
             data.options.client_files_question_path = path.join(context.question_dir, 'clientFilesQuestion');
 
-            module.exports.processQuestion('render', pc, data, context, (err, courseIssues, _data, html, _fileData, renderedElementNames) => {
+            module.exports.processQuestion('render', zy, data, context, (err, courseIssues, _data, html, _fileData, renderedElementNames) => {
                 if (ERR(err, callback)) return;
                 callback(null, courseIssues, html, renderedElementNames);
             });
@@ -640,12 +637,12 @@ module.exports = {
         };
         let allRenderedElementNames = [];
         const courseIssues = [];
-        const pc = new codeCaller.PythonCaller();
+        const zy = zygotePool.request();
         async.series([
             // FIXME: suppprt 'header'
             (callback) => {
                 if (!renderSelection.question) return callback(null);
-                module.exports.renderPanel('question', pc, variant, question, submission, course, locals, (err, ret_courseIssues, html, renderedElementNames) => {
+                module.exports.renderPanel('question', zy, variant, question, submission, course, locals, (err, ret_courseIssues, html, renderedElementNames) => {
                     if (ERR(err, callback)) return;
                     courseIssues.push(...ret_courseIssues);
                     htmls.questionHtml = html;
@@ -656,7 +653,7 @@ module.exports = {
             (callback) => {
                 if (!renderSelection.submissions) return callback(null);
                 async.mapSeries(submissions, (submission, callback) => {
-                    module.exports.renderPanel('submission', pc, variant, question, submission, course, locals, (err, ret_courseIssues, html, renderedElementNames) => {
+                    module.exports.renderPanel('submission', zy, variant, question, submission, course, locals, (err, ret_courseIssues, html, renderedElementNames) => {
                         if (ERR(err, callback)) return;
                         courseIssues.push(...ret_courseIssues);
                         allRenderedElementNames = _.union(allRenderedElementNames, renderedElementNames);
@@ -670,7 +667,7 @@ module.exports = {
             },
             (callback) => {
                 if (!renderSelection.answer) return callback(null);
-                module.exports.renderPanel('answer', pc, variant, question, submission, course, locals, (err, ret_courseIssues, html, renderedElementNames) => {
+                module.exports.renderPanel('answer', zy, variant, question, submission, course, locals, (err, ret_courseIssues, html, renderedElementNames) => {
                     if (ERR(err, callback)) return;
                     courseIssues.push(...ret_courseIssues);
                     htmls.answerHtml = html;
@@ -796,7 +793,7 @@ module.exports = {
                 });
             },
         ], (err) => {
-            pc.done();
+            zy.done();
             if (ERR(err, callback)) return;
             callback(null, courseIssues, htmls);
         });
@@ -816,9 +813,9 @@ module.exports = {
                 options: _.get(variant, 'options', {}),
                 filename: filename,
             };
-            const pc = new codeCaller.PythonCaller();
-            module.exports.processQuestion('file', pc, data, context, (err, courseIssues, _data, _html, fileData) => {
-                pc.done();
+            const zy = zygotePool.request();
+            module.exports.processQuestion('file', zy, data, context, (err, courseIssues, _data, _html, fileData) => {
+                zy.done();
                 if (ERR(err, callback)) return;
                 callback(null, courseIssues, fileData);
             });
@@ -842,9 +839,9 @@ module.exports = {
                 raw_submitted_answers: _.get(submission, 'raw_submitted_answer', {}),
                 gradable: _.get(submission, 'gradable', true),
             };
-            const pc = new codeCaller.PythonCaller();
-            module.exports.processQuestion('parse', pc, data, context, (err, courseIssues, data, _html, _fileData) => {
-                pc.done();
+            const zy = zygotePool.request();
+            module.exports.processQuestion('parse', zy, data, context, (err, courseIssues, data, _html, _fileData) => {
+                zy.done();
                 if (ERR(err, callback)) return;
                 if (_.size(data.format_errors) > 0) data.gradable = false;
                 const ret_vals = {
@@ -881,9 +878,9 @@ module.exports = {
                 raw_submitted_answers: submission.raw_submitted_answer,
                 gradable: submission.gradable,
             };
-            const pc = new codeCaller.PythonCaller();
-            module.exports.processQuestion('grade', pc, data, context, (err, courseIssues, data, _html, _fileData) => {
-                pc.done();
+            const zy = zygotePool.request();
+            module.exports.processQuestion('grade', zy, data, context, (err, courseIssues, data, _html, _fileData) => {
+                zy.done();
                 if (ERR(err, callback)) return;
                 if (_.size(data.format_errors) > 0) data.gradable = false;
                 const ret_vals = {
@@ -921,9 +918,9 @@ module.exports = {
                 raw_submitted_answers: {},
                 gradable: true,
             };
-            const pc = new codeCaller.PythonCaller();
-            module.exports.processQuestion('test', pc, data, context, (err, courseIssues, data, _html, _fileData) => {
-                pc.done();
+            const zy = zygotePool.request();
+            module.exports.processQuestion('test', zy, data, context, (err, courseIssues, data, _html, _fileData) => {
+                zy.done();
                 if (ERR(err, callback)) return;
                 if (_.size(data.format_errors) > 0) data.gradable = false;
                 const ret_vals = {

@@ -28,6 +28,7 @@ const redis = require('./lib/redis');
 const socketServer = require('./lib/socket-server');
 const serverJobs = require('./lib/server-jobs');
 const freeformServer = require('./question-servers/freeform.js');
+const zygotePool = require('./lib/zygote-pool');
 
 // If there is only one argument, legacy it into the config option
 if (argv['_'].length == 1) {
