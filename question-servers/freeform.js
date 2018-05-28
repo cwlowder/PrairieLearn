@@ -5,7 +5,7 @@ const fs = require('fs-extra');
 const path = require('path');
 const mustache = require('mustache');
 const cheerio = require('cheerio');
-const zyspawn = require('zyspawn');
+const zyspawn = require('../zyspawn/zygote-pool');
 
 const logger = require('../lib/logger');
 const zygotePool = require('../lib/zygote-pool');

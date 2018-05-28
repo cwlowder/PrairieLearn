@@ -1,0 +1,3 @@
+[submodule "zyspawn"]
+	path = zyspawn
+	url = https://github.com/PrairieLearn/zyspawn.git
