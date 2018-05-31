@@ -206,7 +206,11 @@ module.exports = {
         if (phase == 'render') pythonArgs.push(html);
         const opts = {
             cwd: context.question_dir,
-            paths: [path.join(__dirname, 'freeformPythonLib'), path.join(context.course_dir, 'serverFilesCourse')],
+            paths: [
+                path.join(__dirname, 'freeformPythonLib'),
+                path.join(__dirname, '../lib'),
+                path.join(context.course_dir, 'serverFilesCourse')
+            ],
         };
         const fullFilename = path.join(context.question_dir, 'server.py');
         fs.access(fullFilename, fs.constants.R_OK, (err) => {
