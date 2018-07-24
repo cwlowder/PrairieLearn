@@ -171,6 +171,7 @@ module.exports = {
             const opts = {
                 cwd,
                 paths: [path.join(__dirname, 'freeformPythonLib'), path.join(__dirname, '../lib')],
+                returnByArg: fcn !== 'file' && fcn !== 'render'
             };
             zy.call(pythonFile, fcn, pythonArgs, opts, (err, output) => {
                 if (err instanceof zyspawn.FunctionMissingError) {
@@ -217,7 +218,12 @@ module.exports = {
         if (phase == 'render') pythonArgs.push(html);
         const opts = {
             cwd: context.question_dir,
-            paths: [path.join(__dirname, 'freeformPythonLib'), path.join(context.course_dir, 'serverFilesCourse')],
+            paths: [
+                path.join(__dirname, 'freeformPythonLib'),
+                path.join(__dirname, '../lib'),
+                path.join(context.course_dir, 'serverFilesCourse')
+            ],
+            returnByArg: pythonFunction !== 'file' && pythonFunction !== 'render'
         };
         const fullFilename = path.join(context.question_dir, 'server.py');
         fs.access(fullFilename, fs.constants.R_OK, (err) => {
